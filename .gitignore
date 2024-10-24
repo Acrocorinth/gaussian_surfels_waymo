@@ -12,6 +12,7 @@ test
 data
 nohup.out
 temp
+__pycache__
 submodules/diff_gaussian_rasterization/diff_gaussian_rasterization.egg-info
 submodules/diff_gaussian_rasterization/build
 submodules/diff_gaussian_rasterization/dist

@@ -9,9 +9,10 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-from scene.cameras import Camera
 import numpy as np
 import torch
+
+from scene.cameras import Camera
 from utils.general_utils import PILtoTorch, quaternion2rotmat, rotmat2quaternion
 from utils.graphics_utils import fov2focal
 from utils.image_utils import resize_image
@@ -97,6 +98,9 @@ def camera_to_JSON(id, camera : Camera):
     return camera_entry
 
 def interpolate_camera(cam_lst, num):
+    """
+    对一组相机进行插值 生成num个插值相机
+    """
     cam_inter = []
     count = 0
     for i in range(len(cam_lst) - 1):

@@ -9,21 +9,30 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
-import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, normal2rotation
-from torch import nn
 import os
-from torch.utils.cpp_extension import load
-from utils.system_utils import mkdir_p
+
+import numpy as np
+import torch
 from plyfile import PlyData, PlyElement
-from utils.sh_utils import RGB2SH, SH2RGB
 from simple_knn._C import distCUDA2
+from torch import nn
+from torch.utils.cpp_extension import load
+
 # from scene.colmap_loader import qvec2rotmat
-from utils.general_utils import quaternion2rotmat
+from utils.general_utils import (
+    build_rotation,
+    build_scaling_rotation,
+    get_expon_lr_func,
+    inverse_sigmoid,
+    normal2rotation,
+    quaternion2rotmat,
+    strip_symmetric,
+)
 from utils.graphics_utils import BasicPointCloud
 from utils.image_utils import world2scrn
-from utils.general_utils import strip_symmetric, build_scaling_rotation
+from utils.sh_utils import RGB2SH, SH2RGB
+from utils.system_utils import mkdir_p
+
 
 class GaussianModel:
 
@@ -68,7 +77,13 @@ class GaussianModel:
         except AttributeError:
             self.config = [True, True, True]
         self.setup_functions()
-        self.utils_mod = load(name="cuda_utils", sources=["utils/ext.cpp", "utils/cuda_utils.cu"])
+        self.utils_mod = load(
+            name="cuda_utils",
+            sources=[
+                "/home/minghui/Code/Paper/gaussian_surfel_origin/gaussian_surfels/utils/ext.cpp",
+                "/home/minghui/Code/Paper/gaussian_surfel_origin/gaussian_surfels/utils/cuda_utils.cu",
+            ],
+        )
         self.opac_reset_record = [0, 0]
 
     def capture(self):
@@ -86,9 +101,9 @@ class GaussianModel:
             self.rot_gradient_accum,
             self.opac_gradient_accum,
             self.denom,
-            self.optimizer.state_dict(),
+            self.optimizer.state_dict(),  # type: ignore
             self.spatial_lr_scale,
-            self.config
+            self.config,
         )
     
     def restore(self, model_args, training_args):
@@ -114,7 +129,10 @@ class GaussianModel:
         self.rot_gradient_accum = rot_gradient_accum
         self.opac_gradient_accum = opac_gradient_accum
         self.denom = denom
-        self.optimizer.load_state_dict(opt_dict)
+        if self.optimizer is not None:
+            self.optimizer.load_state_dict(opt_dict)
+        else:
+            raise ValueError("Optimizer is not initialized.")
 
     @property
     def get_scaling(self):
@@ -163,33 +181,28 @@ class GaussianModel:
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
-        scales = torch.log(torch.sqrt(dist2 / 4))[...,None].repeat(1, 3)
+        scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 3)
 
         # scales = torch.log(torch.ones((len(fused_point_cloud), 3)).cuda() * 0.02)
-        
-        if self.config[0] > 0:
-            if np.abs(np.sum(pcd.normals)) < 1:
-                dup = 4
-                fused_point_cloud = torch.cat([fused_point_cloud for _ in range(dup)], 0)
-                fused_color = torch.cat([fused_color for _ in range(dup)], 0)
-                scales = torch.cat([scales for _ in range(dup)], 0)
-                normals = np.random.rand(len(fused_point_cloud), 3) - 0.5
-                normals /= np.linalg.norm(normals, 2, 1, True)
-            else:
-                normals = pcd.normals
 
-            rots = normal2rotation(torch.from_numpy(normals).to(torch.float32)).to("cuda")
-            scales[..., -1] -= 1e10 # squeeze z scaling
-            # scales[..., -1] = 0
-            # print(pcd.normals)
-            # exit()
-            # rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
-            # rots = self.rotation_activation(rots)
+        if np.abs(np.sum(pcd.normals)) < 1:
+            dup = 1
+            fused_point_cloud = torch.cat([fused_point_cloud for _ in range(dup)], 0)
+            fused_color = torch.cat([fused_color for _ in range(dup)], 0)
+            scales = torch.cat([scales for _ in range(dup)], 0)
+            normals = np.random.rand(len(fused_point_cloud), 3) - 0.5
+            normals /= np.linalg.norm(normals, 2, 1, True)
         else:
-            rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
-            rots[:, 0] = 1
+            normals = pcd.normals
 
-        
+        rots = normal2rotation(torch.from_numpy(normals).to(torch.float32)).to("cuda")
+        scales[..., -1] -= 1e10  # squeeze z scaling
+        # scales[..., -1] = 0
+        # print(pcd.normals)
+        # exit()
+        # rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
+        # rots = self.rotation_activation(rots)
+
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0

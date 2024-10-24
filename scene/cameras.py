@@ -9,13 +9,21 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
-from torch import nn
-import torch.nn.functional as F
 import random
+
 import numpy as np
-from utils.graphics_utils import getWorld2View, getWorld2View2, getProjectionMatrix, fov2focal
+import torch
+import torch.nn.functional as F
+from torch import nn
+
 from utils.general_utils import rotmat2quaternion
+from utils.graphics_utils import (
+    fov2focal,
+    getProjectionMatrix,
+    getWorld2View,
+    getWorld2View2,
+)
+
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, prcppoint,
@@ -124,11 +132,11 @@ class Camera(nn.Module):
     #     if extractor is None:
     #         return self.original_image
     #     return extractor.extract_feature(self.original_image[None])[0]
-            
+
     def get_feat(self, func=None):
         if func is None:
             return self.original_image[None]
-        
+
         # if self.feat is None:
         #     self.feat = func(self.original_image[None])
         #     self.feat = [i.detach() for i in self.feat]
@@ -139,23 +147,21 @@ class Camera(nn.Module):
             feat = [i.detach() for i in feat]
             self.feat = feat
             # print('generating feats')
-            
+
         return self.feat
-    
+
     def get_intrinsic(self):
         fx = fov2focal(self.FoVx, self.image_width)
         fy = fov2focal(self.FoVy, self.image_height)
         cx = self.prcppoint[0] * self.image_width
         cy = self.prcppoint[1] * self.image_height
-        return torch.tensor([fx, 0, cx,
-                             0, fy, cy,
-                             0,  0, 1]).reshape([3, 3])
-
+        return torch.tensor([fx, 0, cx, 0, fy, cy, 0, 0, 1]).reshape([3, 3])
 
     def get_gtMask(self, with_mask=True):
         if self.mask is None or not with_mask:
             self.mask = torch.ones_like(self.original_image[:1], device="cuda")
-        return self.mask#.to(torch.bool)
+
+        return self.mask  # .to(torch.bool)
 
     def get_gtImage(self, bg, with_mask=True, mask_overwrite=None):
         # print(self.original_image.dtype, self.mask.dtype, self.mask.mean())
@@ -165,19 +171,20 @@ class Camera(nn.Module):
             return self.original_image
         # exit()
         mask = self.get_gtMask(with_mask) if mask_overwrite is None else mask_overwrite
+        # mask is 1 for valid pixels, 0 for invalid
         return self.original_image * mask + bg[:, None, None] * (1 - mask)
-    
-    def random_patch(self, h_size=float('inf'), w_size=float('inf')):
+
+    def random_patch(self, h_size=float("inf"), w_size=float("inf")):
         h = self.image_height
         w = self.image_width
         h_size = min(h_size, h)
         w_size = min(w_size, w)
-        h0 = random.randint(0, h - h_size)
-        w0 = random.randint(0, w - w_size)
+        h0 = random.randint(0, h - h_size)  # type: ignore
+        w0 = random.randint(0, w - w_size)  # type: ignore
         h1 = h0 + h_size
         w1 = w0 + w_size
         return torch.tensor([h0, w0, h1, w1]).to(torch.float32).to(self.device)
-    
+
     def add_noise(self, s):
         T = self.T + (random.random() - 0.5) * s
         self.T = nn.Parameter(T.contiguous().requires_grad_(True))
@@ -187,10 +194,6 @@ class Camera(nn.Module):
         self.q = nn.Parameter(camera.q.requires_grad_(True))
         self.T = nn.Parameter(camera.T.requires_grad_(True))
         # self.update()
-
-
-
-                
 
 
 class MiniCam:

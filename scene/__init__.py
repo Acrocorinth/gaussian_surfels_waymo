@@ -9,15 +9,18 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import json
 import os
 import random
-import json
-from utils.system_utils import searchForMaxIteration
+
+import torch
+
+from arguments import ModelParams
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
-from arguments import ModelParams
-import torch
-from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from utils.camera_utils import camera_to_JSON, cameraList_from_camInfos
+from utils.system_utils import searchForMaxIteration
+
 
 class Scene:
 
@@ -27,13 +30,15 @@ class Scene:
         """b
         :param path: Path to colmap scene main folder.
         """
-        self.model_path = args.model_path
+        self.model_path = args.model_path  # type: ignore
         self.loaded_iter = None
         self.gaussians = gaussians
 
         if load_iteration:
             if load_iteration == -1:
-                self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
+                self.loaded_iter = searchForMaxIteration(
+                    os.path.join(self.model_path, "point_cloud")
+                )
             else:
                 self.loaded_iter = load_iteration
             print("Loading trained model at iteration {}".format(self.loaded_iter))
@@ -41,19 +46,13 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        scene_info = sceneLoadTypeCallbacks["waymo"](
+            args.source_path,  # type: ignore
+            args.images,  # type: ignore
+            args.eval,  # type: ignore
+        )  # type: ignore
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
-            print("Found sparse directory, assuming COLMAP data format!")
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
-        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
-            print("Found transforms_train.json file, assuming NeRF data format!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
-        elif os.path.exists(os.path.join(args.source_path, "cameras.npz")):
-            print("Found camera.npz file, assuming IDR data format!")
-            scene_info = sceneLoadTypeCallbacks["IDR"](args.source_path, args.eval)
-        else:
-            assert False, "Could not recognize scene type!"
-
+        self.train_cameras_num = len(scene_info.train_cameras)
         if not self.loaded_iter:
             # with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
             #     dest_file.write(src_file.read())
@@ -106,6 +105,9 @@ class Scene:
         # return [i.get() for i in self.train_cameras[scale]]
         return self.train_cameras[scale]
 
+    def getTrainCamerasNum(self):
+        return self.train_cameras_num
+
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
     
@@ -151,8 +153,8 @@ class Scene:
                 # print(center)
                 # print(i.T@i.R)
                 # colors.append([1, 1, 1, 1.0] if j == 0 else [0, 0, 0, 0.0])
-        import pymeshlab
         import numpy as np
+        import pymeshlab
         ms = pymeshlab.MeshSet()
         ms.add_mesh(pymeshlab.Mesh(vertex_matrix=np.array(points)))
         ms.save_current_mesh('test/cameras.ply')

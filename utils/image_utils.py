@@ -9,16 +9,19 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
-import numpy as np
-from utils.graphics_utils import fov2focal, focal2fov
-from torch.utils.cpp_extension import load
-from matplotlib.colors import ListedColormap
-import matplotlib.pyplot as plt
-from torchvision.utils import save_image
 import glob
+
 import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from matplotlib.colors import ListedColormap
+from torch.utils.cpp_extension import load
+from torchvision.utils import save_image
 from tqdm import tqdm
+
+from utils.graphics_utils import focal2fov, fov2focal
+
 
 def mse(img1, img2):
     return (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
@@ -28,6 +31,9 @@ def psnr(img1, img2):
     return 20 * torch.log10(1.0 / torch.sqrt(mse))
 
 def depth2rgb(depth, mask):
+    """
+    mask过滤后张量排序
+    """
     sort_d = torch.sort(depth[mask.to(torch.bool)])[0]
     min_d = sort_d[len(sort_d) // 100 * 5]
     max_d = sort_d[len(sort_d) // 100 * 95]
@@ -50,16 +56,18 @@ def normal2rgb(normal, mask):
 
 def depth2normal(depth, mask, camera):
     # conver to camera position
-    camD = depth.permute([1, 2, 0])
-    mask = mask.permute([1, 2, 0])
-    shape = camD.shape
-    device = camD.device
-    h, w, _ = torch.meshgrid(torch.arange(0, shape[0]), torch.arange(0, shape[1]), torch.arange(0, shape[2]), indexing='ij')
-    # print(h)
-    h = h.to(torch.float32).to(device)
-    w = w.to(torch.float32).to(device)
-    p = torch.cat([w, h], axis=-1)
-    
+    camD = depth.permute([1, 2, 0])  # h, w, d
+    mask = mask.permute([1, 2, 0])  # h, w, d
+    shape = camD.shape  # h, w, d
+    device = camD.device  # cuda
+    h, w, _ = torch.meshgrid(
+        torch.arange(0, shape[0], device=device, dtype=torch.float32),
+        torch.arange(0, shape[1], device=device, dtype=torch.float32),
+        torch.arange(0, shape[2], device=device, dtype=torch.float32),
+        indexing="ij",
+    )
+    p = torch.cat([w, h], axis=-1)  # type: ignore
+
     p[..., 0:1] -= camera.prcppoint[0] * camera.image_width
     p[..., 1:2] -= camera.prcppoint[1] * camera.image_height
     p *= camD

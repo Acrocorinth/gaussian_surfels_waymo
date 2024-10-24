@@ -10,50 +10,79 @@
 #
 
 import os
-import torch
-from random import randint
-from utils.loss_utils import l1_loss, ssim, cos_loss, bce_loss, knn_smooth_loss
-from gaussian_renderer import render, network_gui
-import numpy as np
 import sys
-from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
-import uuid
-from tqdm import tqdm
-from utils.image_utils import psnr, depth2rgb, normal2rgb, depth2normal, match_depth, normal2curv, resize_image, cross_sample
-from torchvision.utils import save_image
-from argparse import ArgumentParser, Namespace
 import time
-import os
-from arguments import ModelParams, PipelineParams, OptimizationParams
+import uuid
+from argparse import ArgumentParser, Namespace
+from random import randint
+
+import numpy as np
+import torch
+from torchvision.utils import save_image
+from tqdm import tqdm
+
+from arguments import ModelParams, OptimizationParams, PipelineParams
+from gaussian_renderer import render
+from scene import GaussianModel, Scene
+from utils.general_utils import safe_state
+from utils.image_utils import (
+    cross_sample,
+    depth2normal,
+    depth2rgb,
+    match_depth,
+    normal2curv,
+    normal2rgb,
+    psnr,
+    resize_image,
+)
+from utils.loss_utils import bce_loss, cos_loss, knn_smooth_loss, l1_loss, ssim
+
 try:
-    from torch.utils.tensorboard import SummaryWriter
+    from torch.utils.tensorboard.writer import SummaryWriter
+
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+
+def training(
+    dataset,
+    opt,
+    pipe,
+    testing_iterations,
+    saving_iterations,
+    checkpoint_iterations,
+    checkpoint,
+    debug_from,
+):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset)
-    scene = Scene(dataset, gaussians, opt.camera_lr, shuffle=False, resolution_scales=[1, 2, 4])
+    scene = Scene(
+        dataset, gaussians, opt.camera_lr, shuffle=False, resolution_scales=[4]
+    )
     use_mask = dataset.use_mask
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
-    elif use_mask: # visual hull init
-        gaussians.mask_prune(scene.getTrainCameras(), 4)
-        None
+    # elif use_mask:  # visual hull init
+    #     gaussians.mask_prune(scene.getTrainCameras(), 4)
+    #     None
 
-    opt.densification_interval = max(opt.densification_interval, len(scene.getTrainCameras()))
+    opt.densification_interval = max(
+        opt.densification_interval, scene.getTrainCamerasNum()
+    )
 
-    background = torch.tensor([1, 1, 1] if dataset.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
+    background = torch.tensor(
+        [1, 1, 1] if dataset.white_background else [0, 0, 0],
+        dtype=torch.float32,
+        device="cuda",
+    )
 
-    iter_start = torch.cuda.Event(enable_timing = True)
-    iter_end = torch.cuda.Event(enable_timing = True)
+    iter_start = torch.cuda.Event(enable_timing=True)
+    iter_end = torch.cuda.Event(enable_timing=True)
     pool = torch.nn.MaxPool2d(9, stride=1, padding=4)
-
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -61,11 +90,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter += 1
     count = -1
     for iteration in range(first_iter, opt.iterations + 2):
-
-        iter_start.record()
+        iter_start.record()  # type: ignore
 
         gaussians.update_learning_rate(iteration)
-        
+
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
@@ -73,9 +101,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration - 1 == 0:
             scale = 4
         elif iteration - 1 == 2000 + 1:
-            scale = 2
+            scale = 4
         elif iteration - 1 == 5000 + 1:
-            scale = 1
+            scale = 4
         # scale = 1
 
         # Pick a random Camera
@@ -149,10 +177,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         loss.backward()
 
-        iter_end.record()
-        
-
-
+        iter_end.record()  # type: ignore
 
         with torch.no_grad():
             # Progress bar
@@ -183,38 +208,42 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if (iteration - 1) % opt.opacity_reset_interval == 0 and opt.opacity_lr > 0:
                     gaussians.reset_opacity(0.12, iteration)
 
+            # if (iteration - 1) % 1000 == 0 and iteration > 999:
+            #     normal_wrt = normal2rgb(normal, mask_vis)
+            #     depth_wrt = depth2rgb(depth, mask_vis)
+            #     img_wrt = torch.cat(
+            #         [gt_image, image, normal_wrt * opac, depth_wrt * opac], 2
+            #     )
+            #     save_image(img_wrt.cpu(), "test/test.png")
 
-
-            if (iteration - 1) % 1000 == 0:
-                normal_wrt = normal2rgb(normal, mask_vis)
-                depth_wrt = depth2rgb(depth, mask_vis)
-                img_wrt = torch.cat([gt_image, image, normal_wrt * opac, depth_wrt * opac], 2)
-                save_image(img_wrt.cpu(), f'test/test.png')
-                
-
-            
             if iteration < opt.iterations:
-                gaussians.optimizer.step()
-                gaussians.optimizer.zero_grad()
+                gaussians.optimizer.step()  # type: ignore
+                gaussians.optimizer.zero_grad()  # type: ignore
                 # viewpoint_cam.optimizer.step()
                 # viewpoint_cam.optimizer.zero_grad()
 
-            if (iteration in checkpoint_iterations):
+            if iteration in checkpoint_iterations:
                 # gaussians.adaptive_prune(min_opac, scene.cameras_extent)
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                torch.save(
+                    (gaussians.capture(), iteration),
+                    scene.model_path + "/chkpnt" + str(iteration) + ".pth",
+                )
 
 
-def prepare_output_and_logger(args):    
+def prepare_output_and_logger(args):
     if not args.model_path:
-        if os.getenv('OAR_JOB_ID'):
-            unique_str=os.getenv('OAR_JOB_ID')
+        if os.getenv("OAR_JOB_ID"):
+            unique_str = os.getenv("OAR_JOB_ID")
         else:
             unique_str = str(uuid.uuid4())
 
-        args.model_path = os.path.join("./output", f"{args.source_path.split('/')[-1]}_{unique_str[0:10]}")
-        
-        
+        unique_str = time.strftime("%Y-%m-%d-%H-%M")
+
+        args.model_path = os.path.join(
+            "./output", f"{args.source_path.split('/')[-1]}_{unique_str}"
+        )  # type: ignore
+
     # Set up output folder
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
@@ -238,8 +267,10 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : scene.getTrainCameras()[::8]})
+        validation_configs = (
+            {"name": "test", "cameras": scene.getTestCameras(scale=4.0)},
+            {"name": "train", "cameras": scene.getTrainCameras(scale=4.0)[::8]},
+        )
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
