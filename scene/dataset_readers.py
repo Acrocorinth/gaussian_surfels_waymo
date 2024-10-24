@@ -185,7 +185,7 @@ def generate_dataparser_outputs(
     return result
 
 
-def readWaymoFullInfo(path, images="images", split_train=-1, split_test=-1, **kwargs):
+def readWaymoFullInfo(path, cameras, **kwargs):
     # dynamic mask
     dynamic_mask_dir = os.path.join(path, "dynamic_mask")
     # sky mask
@@ -197,7 +197,7 @@ def readWaymoFullInfo(path, images="images", split_train=-1, split_test=-1, **kw
         datadir=path,
         selected_frames=None,
         build_pointcloud=True,
-        cameras=[0, 1, 2, 3, 4],
+        cameras=cameras,
     )
 
     exts = output["exts"]

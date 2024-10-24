@@ -26,7 +26,16 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, camera_lr: float=0.0, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(
+        self,
+        args: ModelParams,
+        gaussians: GaussianModel,
+        camera_lr: float = 0.0,
+        cameras: list = [0, 1, 2],
+        load_iteration=None,
+        shuffle=True,
+        resolution_scales=[1.0],
+    ):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -48,8 +57,7 @@ class Scene:
 
         scene_info = sceneLoadTypeCallbacks["waymo"](
             args.source_path,  # type: ignore
-            args.images,  # type: ignore
-            args.eval,  # type: ignore
+            cameras,  # type: ignore
         )  # type: ignore
 
         self.train_cameras_num = len(scene_info.train_cameras)

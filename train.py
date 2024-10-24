@@ -54,12 +54,18 @@ def training(
     checkpoint_iterations,
     checkpoint,
     debug_from,
+    cameras=[0, 1, 2],
 ):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset)
     scene = Scene(
-        dataset, gaussians, opt.camera_lr, shuffle=False, resolution_scales=[4]
+        dataset,
+        gaussians,
+        opt.camera_lr,
+        cameras,
+        shuffle=False,
+        resolution_scales=[4],
     )
     use_mask = dataset.use_mask
     gaussians.training_setup(opt)
@@ -312,12 +318,23 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--cameras", type=list, default=[0, 1, 2, 3, 4])
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     print("Optimizing " + args.model_path)
     
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(
+        lp.extract(args),
+        op.extract(args),
+        pp.extract(args),
+        args.test_iterations,
+        args.save_iterations,
+        args.checkpoint_iterations,
+        args.start_checkpoint,
+        args.debug_from,
+        args.cameras,
+    )
 
     # All done
     print("\nTraining complete.")
